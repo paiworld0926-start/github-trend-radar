@@ -7,10 +7,11 @@
 - 每月 1 日：读取 GitHub Trending 的 `This month`。
 - 其他周日：读取 `This week`。
 - 其他日期：读取 `Today`。
-- 分别采集 Python、Java、TypeScript 和全部语言榜单的 Top 10。
+- 分别采集 Python 与 TypeScript 榜单的 Top 10。
 - 跨榜重复项目只分析一次，并在报告中标注其来源榜单。
+- 仅保留总 Stars 超过 5,000、且最近推送不超过 6 个月的项目；因此每个榜单的最终条目数可能少于 10。
 
-每个项目会审查 README、License、最新 Release 和近期 Issues，并归纳技术方向、可复用性、产品/课程灵感与学习价值。
+每个项目会审查 README、License、最新 Release 和近期 Issues，并归纳具体技术方向、可复用性、产品/课程灵感与学习价值。超过 1 年的 Release 和逐条 Issues 不会出现在报告中。
 
 ## 配置
 
@@ -27,6 +28,16 @@
 ## 手动运行
 
 进入仓库的 **Actions → Generate GitHub trend report → Run workflow**。可选填 `report_date` 重跑某一天；这对验证部署很方便。
+
+## 本地测试 MiniMax 总结
+
+将 `.env.example` 复制为 `.env`，只在 `.env` 中填写 `MINIMAX_API_KEY`，然后运行：
+
+```bash
+npm run report:local
+```
+
+默认本地配置只抓 Python Top 5，并将测试报告写到 `reports/test-python-top5.md`；不会更新 README，也不会提交或推送任何内容。`.env` 已被 Git 忽略，禁止提交真实密钥。
 
 ## 报告格式
 

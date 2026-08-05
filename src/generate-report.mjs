@@ -1,19 +1,23 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-const TOP_N = 10;
+const TOP_N = Number(process.env.TREND_TOP_N || 10);
 const TIME_ZONE = "Asia/Shanghai";
+const MIN_STARS = 5_000;
+const MAX_PUSH_AGE_MONTHS = 6;
 const GITHUB_API = "https://api.github.com";
 const GITHUB_WEB = "https://github.com";
 const REPORT_DATE = resolveReportDate(process.env.REPORT_DATE);
 
-const boards = [
+const boardCatalog = [
   { key: "python", label: "Python" },
-  { key: "java", label: "Java" },
   { key: "typescript", label: "TypeScript" },
-  { key: null, label: "全部语言" },
 ];
+const selectedBoardKeys = (process.env.TREND_LANGUAGES || "python,typescript").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+const boards = boardCatalog.filter((board) => selectedBoardKeys.includes(board.key));
+if (!boards.length) throw new Error("TREND_LANGUAGES 至少要包含 python 或 typescript。");
 
 function resolveReportDate(input) {
   if (input && /^\d{4}-\d{2}-\d{2}$/.test(input)) return input;
@@ -133,16 +137,41 @@ async function mapWithConcurrency(items, limit, mapper) {
 function dateOnly(value) { return value ? value.slice(0, 10) : "未知"; }
 function escapeMarkdown(value = "") { return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " "); }
 
+function isWithinMonths(value, months, referenceDate = REPORT_DATE) {
+  if (!value) return false;
+  const cutoff = new Date(`${referenceDate}T12:00:00+08:00`);
+  cutoff.setMonth(cutoff.getMonth() - months);
+  const target = new Date(value);
+  return !Number.isNaN(target.valueOf()) && target >= cutoff;
+}
+
+function isEligibleProject(project) {
+  return Number(project.stars) > MIN_STARS && isWithinMonths(project.pushedAt, MAX_PUSH_AGE_MONTHS);
+}
+
+function hasFreshRelease(project) {
+  return Boolean(project.release) && isWithinMonths(project.release.publishedAt, 12);
+}
+
+function readmeSummaryFallback(readme, description) {
+  const paragraphs = String(readme || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/^\s{0,3}#{1,6}\s+.*$/gm, " ")
+    .replace(/^\s*[-*+]\s+.*$/gm, " ")
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
+    .filter((paragraph) => paragraph.length >= 30 && !/^https?:\/\//.test(paragraph));
+  const firstParagraph = paragraphs[0] || "";
+  const sentences = firstParagraph.split(/(?<=[。！？.!?])\s+/).filter(Boolean).slice(0, 2).join(" ");
+  return (sentences || firstParagraph).slice(0, 240) || description;
+}
+
 function heuristic(project) {
-  const release = project.release ? `最近版本 ${project.release.tag} 发布于 ${dateOnly(project.release.publishedAt)}` : "未发现正式 Release";
-  const issues = project.recentIssues.length ? `近期有 ${project.recentIssues.length} 个活跃 issue，最近更新于 ${dateOnly(project.recentIssues[0].updatedAt)}` : "未读取到近期开放 issue";
   return {
-    summary: project.description,
-    direction: `该项目在 ${project.board} 趋势榜中排名第 ${project.rank}，可作为该方向的近期信号。`,
-    reuse: project.license === "MIT" || project.license === "Apache-2.0" || project.license === "BSD-3-Clause" ? "许可证通常支持商用复用；使用前仍应核对仓库 LICENSE 原文及依赖许可证。" : `许可证为 ${project.license}，复用或商用前请进行法务/许可核对。`,
-    inspiration: "可从其 README 的问题定义、示例和使用路径中提炼产品或课程选题。",
-    learning: `${release}；${issues}。`,
-    caution: project.isArchived ? "仓库已归档，不建议作为新项目的核心依赖。" : "自动结论仅作初筛；重要采用决策请人工阅读完整 README 与 LICENSE。",
+    summary: readmeSummaryFallback(project.readme, project.description),
   };
 }
 
@@ -155,7 +184,7 @@ async function summarizeWithMiniMax(projects) {
       name: project.name, description: project.description, boards: project.boards, license: project.license,
       latest_release: project.release ? `${project.release.tag} (${dateOnly(project.release.publishedAt)})` : "none",
       pushed_at: dateOnly(project.pushedAt), open_issues: project.openIssues,
-      recent_issues: project.recentIssues.map((issue) => `${issue.title} (${dateOnly(issue.updatedAt)})`),
+      maintenance_signal: project.recentIssues.length ? `近期有 ${project.recentIssues.length} 个活跃 issue，最新更新于 ${dateOnly(project.recentIssues[0].updatedAt)}` : "未读取到近期开放 issue",
       readme_excerpt: project.readme.slice(0, 3500),
     }));
     const baseUrl = (process.env.MINIMAX_BASE_URL || "https://api.minimaxi.com/v1").replace(/\/$/, "");
@@ -166,7 +195,7 @@ async function summarizeWithMiniMax(projects) {
         method: "POST",
         signal: AbortSignal.timeout(60_000),
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
-        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 1600, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回一个合法 JSON 数组，不要 Markdown、代码围栏、前后说明或换行。每项必须包含 name, summary, direction, reuse, inspiration, learning, caution；所有字段均为纯文本，单字段不超过 35 个中文字符，值内不用英文双引号。" }, { role: "user", content: JSON.stringify(input) }] }),
+        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 1200, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。summary 必须以 readme_excerpt 为主要依据，说明项目解决什么问题、核心能力和适用场景；不要复述 GitHub 趋势排名或泛泛宣传语。必须只返回一个合法 JSON 数组，不要 Markdown、代码围栏、前后说明或换行。每项只包含 name、summary。summary 为纯文本，不超过 100 个中文字符，值内不用英文双引号。" }, { role: "user", content: JSON.stringify(input) }] }),
       });
     } catch (error) {
       console.warn(`MiniMax 请求超时或连接失败（${error.message}），本批使用事实摘要。`);
@@ -197,16 +226,15 @@ async function summarizeWithMiniMax(projects) {
 function renderReport(projects, summaries) {
   const byBoard = new Map(boards.map((board) => [board.label, []]));
   for (const project of projects) for (const board of project.boards) byBoard.get(board).push(project);
-  const featured = projects.slice().sort((a, b) => b.boards.length - a.boards.length || Number(String(b.starsPeriod).replaceAll(",", "")) - Number(String(a.starsPeriod).replaceAll(",", ""))).slice(0, 5);
   const lines = [
     `# GitHub 趋势日报 · ${REPORT_DATE}`,
     "",
-    `> 范围：${period.label} ｜ 时区：${TIME_ZONE} ｜ 榜单：Python、Java、TypeScript、全部语言（各 Top ${TOP_N}）`,
+    `> 范围：${period.label} ｜ 时区：${TIME_ZONE} ｜ 榜单：${boards.map((board) => board.label).join("、")}（各 Top ${TOP_N}，仅保留 Stars > ${MIN_STARS} 且近 ${MAX_PUSH_AGE_MONTHS} 个月有推送的项目）`,
     "",
-    "## 今日观察",
+    "## 本次筛选",
     "",
-    `- 共采集 ${projects.length} 个去重项目；其中跨榜出现的项目优先关注。`,
-    ...featured.map((project) => `- **[${project.name}](${project.url})**：${escapeMarkdown(summaries.get(project.name).summary)}`),
+    `- 通过质量筛选：${projects.length} 个项目。`,
+    `- 条件：总 Stars > ${MIN_STARS}，且最近 ${MAX_PUSH_AGE_MONTHS} 个月有推送。`,
     "",
   ];
   for (const board of boards) {
@@ -215,19 +243,15 @@ function renderReport(projects, summaries) {
       const summary = summaries.get(project.name);
       const rank = project.boardRanks[board.label];
       lines.push(`### ${rank}. [${project.name}](${project.url})`, "");
-      lines.push(`- **项目作用**：${escapeMarkdown(summary.summary)}`);
-      lines.push(`- **趋势与方向**：${escapeMarkdown(summary.direction)}`);
-      lines.push(`- **复用/商用**：${escapeMarkdown(summary.reuse)}（License：${escapeMarkdown(project.license)}）`);
-      lines.push(`- **灵感**：${escapeMarkdown(summary.inspiration)}`);
-      lines.push(`- **学习与维护信号**：${escapeMarkdown(summary.learning)}`);
-      lines.push(`- **风险提示**：${escapeMarkdown(summary.caution)}`);
-      lines.push(`- **事实数据**：本榜第 ${rank}；趋势增星 ${project.starsPeriod}；总 Stars ${project.stars}；最近推送 ${dateOnly(project.pushedAt)}；开放 Issues ${project.openIssues}。`);
-      if (project.release) lines.push(`- **最新 Release**：${escapeMarkdown(project.release.tag)}，${dateOnly(project.release.publishedAt)}。`);
-      if (project.recentIssues.length) lines.push(`- **近期 Issues**：${project.recentIssues.map((issue) => `[${escapeMarkdown(issue.title)}](${issue.url})`).join("；")}`);
+      lines.push(`- **项目介绍**：${escapeMarkdown(project.description)}`);
+      lines.push(`- **项目总结**：${escapeMarkdown(summary.summary)}`);
+      lines.push(`- **License**：${escapeMarkdown(project.license)}`);
+      lines.push(`- **事实数据**：本榜第 ${rank}；趋势增星 ${project.starsPeriod}；总 Stars ${project.stars}；最近推送 ${dateOnly(project.pushedAt)}。`);
+      if (hasFreshRelease(project)) lines.push(`- **最新 Release**：${escapeMarkdown(project.release.tag)}，${dateOnly(project.release.publishedAt)}。`);
       lines.push("");
     }
   }
-  lines.push("---", "", "_说明：趋势榜由 GitHub Trending 抓取；项目资料由 GitHub API 读取。许可证结论仅为技术初筛，不构成法律意见。_");
+  lines.push("---", "", "_说明：趋势榜由 GitHub Trending 抓取；项目资料与 License 标识由 GitHub API 读取。_");
   return `${lines.join("\n")}\n`;
 }
 
@@ -242,7 +266,7 @@ async function updateReadme(reportPath) {
 
 async function main() {
   console.log(`Generating ${period.label} report for ${REPORT_DATE}`);
-  console.log("Fetching four GitHub Trending boards...");
+  console.log(`Fetching ${boards.map((board) => board.label).join(" and ")} GitHub Trending boards...`);
   const rankings = await Promise.all(boards.map(fetchTrending));
   const merged = new Map();
   for (const boardProjects of rankings) for (const item of boardProjects) {
@@ -252,17 +276,24 @@ async function main() {
   }
   console.log(`Inspecting ${merged.size} unique repositories with concurrency 5...`);
   const inspected = await mapWithConcurrency([...merged.values()], 5, inspectProject);
-  inspected.forEach((project) => {
+  const eligibleProjects = inspected.filter(isEligibleProject);
+  console.log(`Retained ${eligibleProjects.length}/${inspected.length} projects after quality filters.`);
+  if (!eligibleProjects.length) throw new Error("没有项目满足 Stars 和近期推送筛选条件。");
+  eligibleProjects.forEach((project) => {
     project.boardRanks = Object.fromEntries(project.boards.map((item) => [item.label, item.rank]));
     project.boards = project.boards.map((item) => item.label);
   });
-  const summaries = await summarizeWithMiniMax(inspected);
+  const summaries = await summarizeWithMiniMax(eligibleProjects);
   const [year, month, day] = REPORT_DATE.split("-");
-  const reportPath = path.join("reports", year, month, `${day}.md`);
+  const reportPath = process.env.REPORT_OUTPUT_PATH || path.join("reports", year, month, `${day}.md`);
   await mkdir(path.dirname(reportPath), { recursive: true });
-  await writeFile(reportPath, renderReport(inspected, summaries));
-  await updateReadme(reportPath);
-  console.log(`Wrote ${reportPath} for ${inspected.length} unique projects.`);
+  await writeFile(reportPath, renderReport(eligibleProjects, summaries));
+  if (!process.env.SKIP_README_UPDATE) await updateReadme(reportPath);
+  console.log(`Wrote ${reportPath} for ${eligibleProjects.length} eligible projects.`);
 }
 
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+export { boards, hasFreshRelease, isEligibleProject, isWithinMonths, readmeSummaryFallback, renderReport, reportingPeriod };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => { console.error(error); process.exitCode = 1; });
+}
