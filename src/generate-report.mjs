@@ -166,7 +166,7 @@ async function summarizeWithMiniMax(projects) {
         method: "POST",
         signal: AbortSignal.timeout(60_000),
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
-        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 2200, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回 JSON 数组，每项包含 name, summary, direction, reuse, inspiration, learning, caution，字段均为简短纯文本。" }, { role: "user", content: JSON.stringify(input) }] }),
+        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 1600, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回一个合法 JSON 数组，不要 Markdown、代码围栏、前后说明或换行。每项必须包含 name, summary, direction, reuse, inspiration, learning, caution；所有字段均为纯文本，单字段不超过 35 个中文字符，值内不用英文双引号。" }, { role: "user", content: JSON.stringify(input) }] }),
       });
     } catch (error) {
       console.warn(`MiniMax 请求超时或连接失败（${error.message}），本批使用事实摘要。`);
