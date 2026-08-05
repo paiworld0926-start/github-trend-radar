@@ -31,3 +31,9 @@
 ## 报告格式
 
 每日报告位于 `reports/YYYY/MM/DD.md`。运行完成后，首页会自动更新最新报告链接。
+
+<!-- latest-report -->
+
+最新报告：[2026-08-05](reports/2026/08/05.md)
+
+<!-- latest-report -->
