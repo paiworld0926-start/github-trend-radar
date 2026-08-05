@@ -133,8 +133,8 @@ function heuristic(project) {
   };
 }
 
-async function summarizeWithOpenAI(projects) {
-  if (!process.env.OPENAI_API_KEY) return new Map(projects.map((project) => [project.name, heuristic(project)]));
+async function summarizeWithMiniMax(projects) {
+  if (!process.env.MINIMAX_API_KEY) return new Map(projects.map((project) => [project.name, heuristic(project)]));
   const results = new Map();
   for (let index = 0; index < projects.length; index += 5) {
     const batch = projects.slice(index, index + 5);
@@ -145,23 +145,24 @@ async function summarizeWithOpenAI(projects) {
       recent_issues: project.recentIssues.map((issue) => `${issue.title} (${dateOnly(issue.updatedAt)})`),
       readme_excerpt: project.readme.slice(0, 3500),
     }));
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const baseUrl = (process.env.MINIMAX_BASE_URL || "https://api.minimax.io/v1").replace(/\/$/, "");
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-5-mini", max_output_tokens: 2200, input: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回 JSON 数组，每项包含 name, summary, direction, reuse, inspiration, learning, caution，字段均为简短纯文本。" }, { role: "user", content: JSON.stringify(input) }] }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
+      body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 2200, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回 JSON 数组，每项包含 name, summary, direction, reuse, inspiration, learning, caution，字段均为简短纯文本。" }, { role: "user", content: JSON.stringify(input) }] }),
     });
     if (!response.ok) {
-      console.warn(`OpenAI 总结失败（${response.status}），本批使用事实摘要。`);
+      console.warn(`MiniMax 总结失败（${response.status}），本批使用事实摘要。`);
       batch.forEach((project) => results.set(project.name, heuristic(project)));
       continue;
     }
     const data = await response.json();
     try {
-      const content = (data.output_text || "").replace(/^```json\s*|\s*```$/g, "");
+      const content = (data.choices?.[0]?.message?.content || "").replace(/^```json\s*|\s*```$/g, "");
       const summaries = JSON.parse(content);
       for (const item of summaries) if (item.name) results.set(item.name, item);
     } catch {
-      console.warn("OpenAI 返回内容无法解析，本批使用事实摘要。");
+      console.warn("MiniMax 返回内容无法解析，本批使用事实摘要。");
     }
     batch.forEach((project) => { if (!results.has(project.name)) results.set(project.name, heuristic(project)); });
   }
@@ -228,7 +229,7 @@ async function main() {
     project.boardRanks = Object.fromEntries(project.boards.map((item) => [item.label, item.rank]));
     project.boards = project.boards.map((item) => item.label);
   });
-  const summaries = await summarizeWithOpenAI(inspected);
+  const summaries = await summarizeWithMiniMax(inspected);
   const [year, month, day] = REPORT_DATE.split("-");
   const reportPath = path.join("reports", year, month, `${day}.md`);
   await mkdir(path.dirname(reportPath), { recursive: true });
