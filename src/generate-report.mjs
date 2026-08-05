@@ -180,11 +180,14 @@ async function summarizeWithMiniMax(projects) {
     }
     const data = await response.json();
     try {
-      const content = (data.choices?.[0]?.message?.content || "").replace(/^```json\s*|\s*```$/g, "");
-      const summaries = JSON.parse(content);
+      const content = String(data.choices?.[0]?.message?.content || "").trim();
+      const start = content.indexOf("[");
+      const end = content.lastIndexOf("]");
+      if (start < 0 || end <= start) throw new Error("未找到 JSON 数组");
+      const summaries = JSON.parse(content.slice(start, end + 1));
       for (const item of summaries) if (item.name) results.set(item.name, item);
-    } catch {
-      console.warn("MiniMax 返回内容无法解析，本批使用事实摘要。");
+    } catch (error) {
+      console.warn(`MiniMax 返回内容无法解析（${error.message}），本批使用事实摘要。`);
     }
     batch.forEach((project) => { if (!results.has(project.name)) results.set(project.name, heuristic(project)); });
   }
@@ -193,7 +196,7 @@ async function summarizeWithMiniMax(projects) {
 
 function renderReport(projects, summaries) {
   const byBoard = new Map(boards.map((board) => [board.label, []]));
-  for (const project of projects) for (const board of project.boards) byBoard.get(board.label).push(project);
+  for (const project of projects) for (const board of project.boards) byBoard.get(board).push(project);
   const featured = projects.slice().sort((a, b) => b.boards.length - a.boards.length || Number(String(b.starsPeriod).replaceAll(",", "")) - Number(String(a.starsPeriod).replaceAll(",", ""))).slice(0, 5);
   const lines = [
     `# GitHub 趋势日报 · ${REPORT_DATE}`,
