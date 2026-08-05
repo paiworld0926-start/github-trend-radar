@@ -42,7 +42,7 @@ async function fetchOrThrow(url, options = {}, retries = 2) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      const response = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
+      const response = await fetch(url, { ...options, signal: AbortSignal.timeout(20_000), headers: { ...headers, ...options.headers } });
       if (response.ok) return response;
       if (response.status === 404) return response;
       if (response.status < 500 && response.status !== 429) {
@@ -117,6 +117,19 @@ async function inspectProject(project) {
   };
 }
 
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]);
+    }
+  }));
+  return results;
+}
+
 function dateOnly(value) { return value ? value.slice(0, 10) : "未知"; }
 function escapeMarkdown(value = "") { return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " "); }
 
@@ -146,11 +159,20 @@ async function summarizeWithMiniMax(projects) {
       readme_excerpt: project.readme.slice(0, 3500),
     }));
     const baseUrl = (process.env.MINIMAX_BASE_URL || "https://api.minimaxi.com/v1").replace(/\/$/, "");
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
-      body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 2200, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回 JSON 数组，每项包含 name, summary, direction, reuse, inspiration, learning, caution，字段均为简短纯文本。" }, { role: "user", content: JSON.stringify(input) }] }),
-    });
+    console.log(`Summarizing MiniMax batch ${index / 5 + 1}/${Math.ceil(projects.length / 5)}`);
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        signal: AbortSignal.timeout(60_000),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
+        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 2200, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。不要把许可证解读成法律意见；不确定时明确说明。必须只返回 JSON 数组，每项包含 name, summary, direction, reuse, inspiration, learning, caution，字段均为简短纯文本。" }, { role: "user", content: JSON.stringify(input) }] }),
+      });
+    } catch (error) {
+      console.warn(`MiniMax 请求超时或连接失败（${error.message}），本批使用事实摘要。`);
+      batch.forEach((project) => results.set(project.name, heuristic(project)));
+      continue;
+    }
     if (!response.ok) {
       console.warn(`MiniMax 总结失败（${response.status}），本批使用事实摘要。`);
       batch.forEach((project) => results.set(project.name, heuristic(project)));
@@ -217,6 +239,7 @@ async function updateReadme(reportPath) {
 
 async function main() {
   console.log(`Generating ${period.label} report for ${REPORT_DATE}`);
+  console.log("Fetching four GitHub Trending boards...");
   const rankings = await Promise.all(boards.map(fetchTrending));
   const merged = new Map();
   for (const boardProjects of rankings) for (const item of boardProjects) {
@@ -224,7 +247,8 @@ async function main() {
     if (existing) existing.boards.push({ label: item.board, rank: item.rank });
     else merged.set(item.name, { ...item, boards: [{ label: item.board, rank: item.rank }] });
   }
-  const inspected = await Promise.all([...merged.values()].map(inspectProject));
+  console.log(`Inspecting ${merged.size} unique repositories with concurrency 5...`);
+  const inspected = await mapWithConcurrency([...merged.values()], 5, inspectProject);
   inspected.forEach((project) => {
     project.boardRanks = Object.fromEntries(project.boards.map((item) => [item.label, item.rank]));
     project.boards = project.boards.map((item) => item.label);
