@@ -20,7 +20,7 @@
 | --- | --- | --- | --- |
 | Secret | `MINIMAX_API_KEY` | 推荐 | MiniMax 的 API Key，用于生成中文分析。未配置时仍会生成结构化事实报告。 |
 | Variable | `MINIMAX_MODEL` | 可选 | 默认 `MiniMax-M2.7`；可改为你账户可用的文本模型。 |
-| Variable | `MINIMAX_BASE_URL` | 可选 | 默认 `https://api.minimax.io/v1`。若你的 MiniMax 控制台要求中国区端点，可改为其提供的地址。 |
+| Variable | `MINIMAX_BASE_URL` | 可选 | 默认 `https://api.minimaxi.com/v1`。如使用国际站，可改为其提供的地址。 |
 
 `GITHUB_TOKEN` 由 Actions 自动提供，用来读取项目数据和提交报告，无需手工创建。工作流已声明 `contents: write` 权限。
 

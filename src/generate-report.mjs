@@ -145,7 +145,7 @@ async function summarizeWithMiniMax(projects) {
       recent_issues: project.recentIssues.map((issue) => `${issue.title} (${dateOnly(issue.updatedAt)})`),
       readme_excerpt: project.readme.slice(0, 3500),
     }));
-    const baseUrl = (process.env.MINIMAX_BASE_URL || "https://api.minimax.io/v1").replace(/\/$/, "");
+    const baseUrl = (process.env.MINIMAX_BASE_URL || "https://api.minimaxi.com/v1").replace(/\/$/, "");
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
