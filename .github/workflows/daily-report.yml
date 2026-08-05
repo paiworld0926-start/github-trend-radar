@@ -1,0 +1,51 @@
+name: Generate GitHub trend report
+
+on:
+  schedule:
+    # GitHub Actions schedules use UTC. 01:00 UTC is 09:00 in Asia/Shanghai.
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      report_date:
+        description: "Report date in YYYY-MM-DD (optional; defaults to today in Asia/Shanghai)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: github-trend-radar
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TZ: Asia/Shanghai
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5-mini' }}
+      REPORT_DATE: ${{ inputs.report_date }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate report
+        run: npm run report
+
+      - name: Commit report
+        run: |
+          if git diff --quiet -- reports README.md; then
+            echo "No report changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports README.md
+          git commit -m "docs: add GitHub trend report for $(date +%F)"
+          git push
