@@ -7,11 +7,11 @@
 - 每月 1 日：读取 GitHub Trending 的 `This month`。
 - 其他周日：读取 `This week`。
 - 其他日期：读取 `Today`。
-- 分别采集 Python 与 TypeScript 榜单的 Top 10。
+- 采集 Python 与 TypeScript Trending 页面当前展示的全部项目。
 - 跨榜重复项目只分析一次，并在报告中标注其来源榜单。
-- 仅保留总 Stars 超过 5,000、且最近推送不超过 6 个月的项目；因此每个榜单的最终条目数可能少于 10。
+- 仅保留总 Stars 超过 5,000、且最近推送不超过 6 个月的项目。
 
-每个项目会审查 README、License、最新 Release 和近期 Issues，并归纳具体技术方向、可复用性、产品/课程灵感与学习价值。超过 1 年的 Release 和逐条 Issues 不会出现在报告中。
+每个项目会读取项目详情和 README，输出项目介绍、README 总结，以及“项目是什么、为什么需要、下一步可以应用到哪里”的延伸分析。超过 1 年的 Release 和逐条 Issues 不会出现在报告中。
 
 ## 配置
 

@@ -18,11 +18,14 @@ test("报告不展示过期 Release 与 Issues", () => {
     starsPeriod: "123", stars: 9000, pushedAt: "2026-06-01T00:00:00Z", openIssues: 10,
     release: { tag: "v1.0.0", publishedAt: "2024-01-01T00:00:00Z" }, recentIssues: [{ title: "not shown" }],
   };
-  const summary = new Map([[project.name, { summary: "基于 README 的项目总结" }]]);
+  const summary = new Map([[project.name, { summary: "基于 README 的项目总结", what: "项目是什么", why: "为什么需要", next_application: "下一步应用" }]]);
   const report = renderReport([project], summary);
   assert.equal(hasFreshRelease(project), false);
   assert.match(report, /项目介绍.*项目介绍文本/);
   assert.match(report, /项目总结.*基于 README 的项目总结/);
+  assert.match(report, /项目是什么.*项目是什么/);
+  assert.match(report, /为什么需要.*为什么需要/);
+  assert.match(report, /下一步可以应用到.*下一步应用/);
   assert.doesNotMatch(report, /项目作用|技术方向|最新 Release|近期 Issues|not shown|复用\/商用|灵感|学习与维护信号|风险提示/);
 });
 

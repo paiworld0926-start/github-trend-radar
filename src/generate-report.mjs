@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const TOP_N = Number(process.env.TREND_TOP_N || 10);
+// 0 means all projects currently displayed by GitHub Trending. Set TREND_TOP_N
+// only for a smaller local smoke test.
+const TOP_N = Number(process.env.TREND_TOP_N || 0);
 const TIME_ZONE = "Asia/Shanghai";
 const MIN_STARS = 5_000;
 const MAX_PUSH_AGE_MONTHS = 6;
@@ -79,7 +81,7 @@ async function fetchTrending(board) {
     const descriptionMatch = article.match(/<p[^>]*>([\s\S]*?)<\/p>/);
     const starsMatch = article.match(/([\d,]+)\s+stars?\s+today/i) || article.match(/([\d,]+)\s+stars?\s+this\s+(?:week|month)/i);
     projects.push({ name, board: board.label, rank: projects.length + 1, trendingDescription: decodeHtml(descriptionMatch?.[1]), starsPeriod: starsMatch?.[1] ?? "—" });
-    if (projects.length === TOP_N) break;
+    if (TOP_N > 0 && projects.length === TOP_N) break;
   }
   if (!projects.length) throw new Error(`无法从 GitHub Trending 读取 ${board.label} 榜单。`);
   return projects;
@@ -163,15 +165,23 @@ function readmeSummaryFallback(readme, description) {
     .replace(/^\s*[-*+]\s+.*$/gm, " ")
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
-    .filter((paragraph) => paragraph.length >= 30 && !/^https?:\/\//.test(paragraph));
-  const firstParagraph = paragraphs[0] || "";
+    .filter((paragraph) => paragraph.length >= 30 && !/^https?:\/\//.test(paragraph))
+    .filter((paragraph) => !/add translation|table of contents|^notebooks\s*\|/i.test(paragraph));
+  const firstParagraph = paragraphs.sort((a, b) => {
+    const score = (value) => (value.includes("|") ? -2 : 0) + (value.includes("http") ? -2 : 0) + Math.min(value.length, 240) / 240;
+    return score(b) - score(a);
+  })[0] || "";
   const sentences = firstParagraph.split(/(?<=[。！？.!?])\s+/).filter(Boolean).slice(0, 2).join(" ");
   return (sentences || firstParagraph).slice(0, 240) || description;
 }
 
 function heuristic(project) {
+  const summary = readmeSummaryFallback(project.readme, project.description);
   return {
-    summary: readmeSummaryFallback(project.readme, project.description),
+    summary,
+    what: summary,
+    why: `README 表明该项目用于解决：${summary.slice(0, 90)}`,
+    next_application: "可先在一个小型原型或内部流程中验证，再决定是否扩大使用范围。",
   };
 }
 
@@ -195,7 +205,7 @@ async function summarizeWithMiniMax(projects) {
         method: "POST",
         signal: AbortSignal.timeout(60_000),
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.MINIMAX_API_KEY}` },
-        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 1200, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据提供事实，用简体中文逐项目总结。summary 必须以 readme_excerpt 为主要依据，说明项目解决什么问题、核心能力和适用场景；不要复述 GitHub 趋势排名或泛泛宣传语。必须只返回一个合法 JSON 数组，不要 Markdown、代码围栏、前后说明或换行。每项只包含 name、summary。summary 为纯文本，不超过 100 个中文字符，值内不用英文双引号。" }, { role: "user", content: JSON.stringify(input) }] }),
+        body: JSON.stringify({ model: process.env.MINIMAX_MODEL || "MiniMax-M2.7", max_completion_tokens: 1800, messages: [{ role: "system", content: "你是谨慎的开源技术研究员。仅根据 readme_excerpt 和提供事实，用简体中文逐项目输出延伸分析。what 说明项目是什么；why 说明为什么需要、解决什么痛点；next_application 说明下一步可以应用到哪里。不要复述趋势排名，不要使用空泛的“值得关注”等表达。必须只返回一个合法 JSON 数组，不要 Markdown、代码围栏、前后说明或换行。每项只包含 name、summary、what、why、next_application；每个字段为纯文本且不超过 100 个中文字符，值内不用英文双引号。" }, { role: "user", content: JSON.stringify(input) }] }),
       });
     } catch (error) {
       console.warn(`MiniMax 请求超时或连接失败（${error.message}），本批使用事实摘要。`);
@@ -229,7 +239,7 @@ function renderReport(projects, summaries) {
   const lines = [
     `# GitHub 趋势日报 · ${REPORT_DATE}`,
     "",
-    `> 范围：${period.label} ｜ 时区：${TIME_ZONE} ｜ 榜单：${boards.map((board) => board.label).join("、")}（各 Top ${TOP_N}，仅保留 Stars > ${MIN_STARS} 且近 ${MAX_PUSH_AGE_MONTHS} 个月有推送的项目）`,
+    `> 范围：${period.label} ｜ 时区：${TIME_ZONE} ｜ 榜单：${boards.map((board) => board.label).join("、")}（抓取页面全部项目，仅保留 Stars > ${MIN_STARS} 且近 ${MAX_PUSH_AGE_MONTHS} 个月有推送的项目）`,
     "",
     "## 本次筛选",
     "",
@@ -238,13 +248,17 @@ function renderReport(projects, summaries) {
     "",
   ];
   for (const board of boards) {
-    lines.push(`## ${board.label} Top ${TOP_N}`, "");
+    lines.push(`## ${board.label}`, "");
     for (const project of byBoard.get(board.label)) {
       const summary = summaries.get(project.name);
       const rank = project.boardRanks[board.label];
       lines.push(`### ${rank}. [${project.name}](${project.url})`, "");
       lines.push(`- **项目介绍**：${escapeMarkdown(project.description)}`);
       lines.push(`- **项目总结**：${escapeMarkdown(summary.summary)}`);
+      lines.push("- **延伸**：");
+      lines.push(`  - 项目是什么：${escapeMarkdown(summary.what)}`);
+      lines.push(`  - 为什么需要：${escapeMarkdown(summary.why)}`);
+      lines.push(`  - 下一步可以应用到：${escapeMarkdown(summary.next_application)}`);
       lines.push(`- **License**：${escapeMarkdown(project.license)}`);
       lines.push(`- **事实数据**：本榜第 ${rank}；趋势增星 ${project.starsPeriod}；总 Stars ${project.stars}；最近推送 ${dateOnly(project.pushedAt)}。`);
       if (hasFreshRelease(project)) lines.push(`- **最新 Release**：${escapeMarkdown(project.release.tag)}，${dateOnly(project.release.publishedAt)}。`);
