@@ -42,10 +42,6 @@ jobs:
 
       - name: Commit report
         run: |
-          # The scheduled runner may have checked out an older main while a
-          # manual run or another action pushed a report. Sync before commit.
-          git fetch origin main
-          git rebase origin/main
           if git diff --quiet -- reports README.md; then
             echo "No report changes to commit."
             exit 0
