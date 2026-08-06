@@ -2,8 +2,9 @@ name: Generate GitHub trend report
 
 on:
   schedule:
-    # GitHub Actions schedules use UTC. 01:00 UTC is 09:00 in Asia/Shanghai.
-    - cron: "0 1 * * *"
+    # GitHub Actions schedules use UTC. 01:05 UTC is 09:05 in Asia/Shanghai.
+    # Avoiding minute 00 reduces the chance of GitHub scheduler congestion.
+    - cron: "5 1 * * *"
   workflow_dispatch:
     inputs:
       report_date:
