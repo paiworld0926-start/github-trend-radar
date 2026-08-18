@@ -45,6 +45,6 @@ npm run report:local
 
 <!-- latest-report -->
 
-最新报告：[2026-08-17](reports/2026/08/17.md)
+最新报告：[2026-08-18](reports/2026/08/18.md)
 
 <!-- latest-report -->
